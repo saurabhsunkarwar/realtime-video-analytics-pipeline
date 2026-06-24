@@ -1,63 +1,96 @@
 import cv2
 import json
 import time
+import os
+import pyodbc
 from ultralytics import YOLO
 
 
 class UnifiedVideoAnalyticsPipeline:
-    def __init__(self, weights="yolov8n.pt"):
+    def __init__(self, weights="yolov8n.pt", log_file="analytics_logs.json"):
         """
-        Initializes the pipeline with a lightweight YOLOv8 model
-        optimized for real-time edge processing.
+        Initializes YOLOv8, local JSON logging, and active SQL Server connectivity.
         """
         self.model = YOLO(weights)
-
-        # COCO Dataset Class IDs:
-        # 0: person, 2: car, 3: motorcycle, 5: bus, 7: truck, 63: laptop, 67: cell phone
+        self.log_file = log_file
         self.target_classes = [0, 2, 3, 5, 7, 63, 67]
 
+        # Initialize local JSON file
+        with open(self.log_file, "w") as f:
+            f.write("[]\n")
+
+        # SQL Server Connection Configuration
+        self.server = r'MSI\SQLEXPRESS'
+        self.database = 'SecurityAnalytics'
+        self.conn_str = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={self.server};DATABASE={self.database};Trusted_Connection=yes;"
+
+        print("[INFO] Testing SQL Server Connection...")
+        try:
+            conn = pyodbc.connect(self.conn_str)
+            conn.close()
+            print("[SUCCESS] Connected to SQL Server Table: VideoAnalyticsLogs")
+        except Exception as e:
+            print(f"[WARNING] SQL Connection failed: {e}. Ensure SQL Server is running.")
+
+    def save_to_local_json(self, frame_log):
+        """Appends the live frame log directly into a local JSON array file."""
+        try:
+            with open(self.log_file, "r+") as f:
+                f.seek(0, os.SEEK_END)
+                pos = f.tell() - 2
+                if pos > 0:
+                    f.seek(pos)
+                    f.write(",\n" + json.dumps(frame_log) + "]")
+                else:
+                    f.seek(0)
+                    f.write("[" + json.dumps(frame_log) + "]")
+        except Exception as e:
+            print(f"[ERROR] JSON file write failed: {e}")
+
+    def insert_into_sql_server(self, timestamp, humans, vehicles, gadgets):
+        """Inserts aggregated frame traffic counts straight into SSMS."""
+        try:
+            conn = pyodbc.connect(self.conn_str)
+            cursor = conn.cursor()
+            query = """
+                    INSERT INTO VideoAnalyticsLogs (LogTimestamp, TotalHumans, TotalVehicles, TotalGadgets)
+                    VALUES (?, ?, ?, ?)
+                    """
+            cursor.execute(query, (timestamp, humans, vehicles, gadgets))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"[DATABASE ERROR] Failed inserting to SQL Server: {e}")
+
     def process_video(self, source=0):
-        """
-        Ingests video streams, runs multi-class inference,
-        and outputs synchronized visual and structured data streams.
-        """
         cap = cv2.VideoCapture(source)
-        print("[INFO] Production Pipeline Initialized. Ingesting Video Stream...")
+        print(f"[INFO] Ingestion Pipeline Active. Streaming to Local JSON and SSMS...")
 
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
-                print("[INFO] Video stream ended or failed to load.")
                 break
 
-            # Run inference (verbose=False keeps terminal clean for JSON log stream)
             results = self.model(frame, verbose=False)
-
-            # Extract the first result object from the list
             result = results[0]
 
-            # Initialize structured time-series JSON payload
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
             frame_log = {
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-                "metrics": {
-                    "total_humans": 0,
-                    "total_vehicles": 0,
-                    "total_surround_gadgets": 0
-                },
+                "timestamp": timestamp,
+                "metrics": {"total_humans": 0, "total_vehicles": 0, "total_surround_gadgets": 0},
                 "detections": []
             }
 
-            # Use 'result.boxes' (singular 'result') to iterate safely
             for box in result.boxes:
-                class_id = int(box.cls[0])
-                confidence = float(box.conf[0])
+                class_id = int(box.cls)
+                confidence = float(box.conf)
 
-                # Filter by target classes and confidence threshold
                 if class_id in self.target_classes and confidence > 0.45:
                     label = self.model.names[class_id]
-                    bbox = [round(float(x), 1) for x in box.xyxy[0].tolist()]
+                    # Flatten the multi-dimensional tensor list by extracting the first element [0]
+                    bbox_flat = box.xyxy.tolist()[0]
+                    bbox = [round(float(x), 1) for x in bbox_flat]
 
-                    # Group metrics and dynamically categorize
                     if label == "person":
                         frame_log["metrics"]["total_humans"] += 1
                         demo_tag = "Male (25-30)" if int(bbox[0]) % 2 == 0 else "Female (20-25)"
@@ -68,7 +101,6 @@ class UnifiedVideoAnalyticsPipeline:
                         frame_log["metrics"]["total_surround_gadgets"] += 1
                         demo_tag = "N/A"
 
-                    # Build metadata dictionary for database ingestion
                     frame_log["detections"].append({
                         "object_class": label,
                         "confidence": round(confidence, 2),
@@ -76,21 +108,25 @@ class UnifiedVideoAnalyticsPipeline:
                         "demographic_context": demo_tag
                     })
 
-                    # Render visual annotation layer
+                    # Convert to integers for drawing bounding boxes safely
                     xmin, ymin, xmax, ymax = map(int, bbox)
                     cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
                     display_text = f"{label} | {demo_tag}" if label == "person" else label
-                    cv2.putText(frame, display_text, (xmin, ymin - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    cv2.putText(frame, display_text, (xmin, ymin - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-            # Output structured JSON log stream to standard output
             if frame_log["detections"]:
                 print(json.dumps(frame_log))
+                self.save_to_local_json(frame_log)
 
-            # Render real-time visual output window
+                # Write direct metrics stream to local SSMS database
+                self.insert_into_sql_server(
+                    timestamp,
+                    frame_log["metrics"]["total_humans"],
+                    frame_log["metrics"]["total_vehicles"],
+                    frame_log["metrics"]["total_surround_gadgets"]
+                )
+
             cv2.imshow("Production Video Analytics Feed", frame)
-
-            # Press 'q' to safely terminate the pipeline
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 print("[INFO] Pipeline safely terminated by user.")
                 break
