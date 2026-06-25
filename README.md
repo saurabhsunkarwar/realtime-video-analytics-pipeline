@@ -1,5 +1,5 @@
-# Real-Time Video Analytics Pipeline: Edge-to-Database Ingestion
-
+# Real-Time Video Analytics Pipeline Using YOLOv8, OpenCV and SQL Server
+A real-time computer vision pipeline that performs object detection on live video streams, generates structured analytics metadata, and simultaneously stores results in JSON and Microsoft SQL Server for downstream analysis.
 ## 1. Problem Statement
 Manual security monitoring and video surveillance are highly inefficient, error-prone, and scale poorly. Organizations capture thousands of hours of video footage but fail to convert this visual data into structured, actionable business intelligence. 
 
@@ -22,7 +22,7 @@ This project implements an **edge-computing ingestion pipeline** that processes 
 
 ### Architectural Pillars
 1. **Edge Inference Engine (`OpenCV` + `Ultralytics YOLOv8`):** Captures high-frame-rate video streams at the edge. The system filters objects down to targeted structural classes (Humans, Vehicles, Gadgets) using a confidence threshold of >0.45.
-2. **Semi-Structured Local Cache (`JSON`):** Serializes raw pixel coordinates, granular tracking IDs, bounding boxes, and metadata into a local JSON flat-file. This ensures zero data loss if connection to the database drops.
+2. **Semi-Structured Local Cache (`JSON`):** Serializes object class labels, confidence scores, bounding box coordinates, and frame-level metadata into a local JSON file. This provides a detailed event log alongside the structured SQL analytics records.
 3. **Relational Ingestion Pipeline (`PyODBC`):** Flattens the deep JSON array into a metrics stream and issues `INSERT` transactions to a local Microsoft SQL Server (`SSMS`) instance for operational dashboards.
 
 ---
@@ -85,7 +85,7 @@ SELECT
 FROM VideoAnalyticsLogs;
 ```
 ### 4. Edge Performance Benchmark & Field Notes
-During a **20-second production stress test**, the pipeline's ingestion speed and data fidelity were benchmarked on local edge hardware:
+During a **20-second local webcam benchmark**, the pipeline's ingestion speed and detection behavior were evaluated on CPU-based edge hardware:
 
 * **Total Processed Volume:** ~572 frames.
 * **Ingestion Frame Rate:** ~28.6 Frames Per Sec (FPS) live capture.
@@ -99,6 +99,19 @@ The slight inflation in cumulative metrics (~2.4% variance relative to actual ba
 #### Engineering Mitigations (Future Roadmap)
 To stabilize metric aggregation for enterprise deployments, the next development iteration will transition from raw spatial detections to stateful trajectory tracking by integrating **ByteTRACK** or **BoT-SORT** (`model.track(source, persist=True)`). This will tie detections to persistent unique IDs, neutralizing individual frame-level count spikes.
 
+## Current Limitations
+
+The current implementation performs frame-level object detection only.
+
+Because detections are counted independently for each frame:
+
+- The same object may be counted multiple times across consecutive frames.
+- Temporary duplicate detections may occur.
+- Persistent object identities are not maintained.
+
+As a result, cumulative object counts should be interpreted as detection events rather than unique individuals or vehicles.
+
+Future versions will integrate ByteTrack or BoT-SORT to assign persistent object IDs and improve aggregation accuracy.
 ### 5. Sample JSON Event Stream Output
 Below is an architectural snapshot of the semi-structured JSON payload structured by the pipeline per active frame:
 
@@ -115,10 +128,20 @@ Below is an architectural snapshot of the semi-structured JSON payload structure
       {
         "object_class": "person",
         "confidence": 0.89,
-        "bounding_box": [120.4, 45.1, 340.8, 620.0],
-        "demographic_context": "Male (25-30)"
+        "bounding_box": [120.4, 45.1, 340.8, 620.0] 
       }
     ]
   }
 ]
 ```
+## Future Enhancements
+
+Planned improvements include:
+
+- ByteTrack / BoT-SORT object tracking
+- Unique footfall counting
+- Multi-camera stream support
+- GPU-accelerated inference
+- Asynchronous database ingestion
+- Secondary age and gender classification models
+- REST API for analytics retrieval

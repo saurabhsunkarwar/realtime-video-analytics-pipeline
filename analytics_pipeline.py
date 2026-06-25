@@ -93,25 +93,21 @@ class UnifiedVideoAnalyticsPipeline:
 
                     if label == "person":
                         frame_log["metrics"]["total_humans"] += 1
-                        demo_tag = "Male (25-30)" if int(bbox[0]) % 2 == 0 else "Female (20-25)"
                     elif label in ["car", "motorcycle", "bus", "truck"]:
                         frame_log["metrics"]["total_vehicles"] += 1
-                        demo_tag = "N/A"
                     else:
                         frame_log["metrics"]["total_surround_gadgets"] += 1
-                        demo_tag = "N/A"
 
                     frame_log["detections"].append({
                         "object_class": label,
                         "confidence": round(confidence, 2),
-                        "bounding_box": bbox,
-                        "demographic_context": demo_tag
+                        "bounding_box": bbox
                     })
 
                     # Convert to integers for drawing bounding boxes safely
                     xmin, ymin, xmax, ymax = map(int, bbox)
                     cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
-                    display_text = f"{label} | {demo_tag}" if label == "person" else label
+                    display_text = label
                     cv2.putText(frame, display_text, (xmin, ymin - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
             if frame_log["detections"]:
