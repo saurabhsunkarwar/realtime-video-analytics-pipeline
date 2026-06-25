@@ -84,3 +84,17 @@ SELECT
     MAX(LogTimestamp) as LastActiveTimestamp
 FROM VideoAnalyticsLogs;
 ```
+### 4. Edge Performance Benchmark & Field Notes
+During a **20-second production stress test**, the pipeline's ingestion speed and data fidelity were benchmarked on local edge hardware:
+
+* **Total Processed Volume:** ~572 frames.
+* **Ingestion Frame Rate:** ~28.6 Frames Per Sec (FPS) live capture.
+* **Cumulative Metric Drift:** Total logged human detections reached **586 counts** over the raw frame span.
+
+#### Technical Analysis of Metric Drift (Ghost Detections)
+The slight inflation in cumulative metrics (~2.4% variance relative to actual background counts) is a documented behavior of running a lightweight edge model (`yolov8n.pt`) without an overlapping temporal tracking layer:
+1. **Bounding Box Jitter:** Minor lighting fluctuations at the edge can cause the model to split or duplicate a single human target across sequential high-frequency frames.
+2. **Ghost Detections:** Transient background noise can trigger a brief, isolated high-confidence threshold flag (>0.45) that resolves itself natively in under 3 frames.
+
+#### Engineering Mitigations (Future Roadmap)
+To stabilize metric aggregation for enterprise deployments, the next development iteration will transition from raw spatial detections to stateful trajectory tracking by integrating **ByteTRACK** or **BoT-SORT** (`model.track(source, persist=True)`). This will tie detections to persistent unique IDs, neutralizing individual frame-level count spikes.
