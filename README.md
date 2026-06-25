@@ -98,3 +98,27 @@ The slight inflation in cumulative metrics (~2.4% variance relative to actual ba
 
 #### Engineering Mitigations (Future Roadmap)
 To stabilize metric aggregation for enterprise deployments, the next development iteration will transition from raw spatial detections to stateful trajectory tracking by integrating **ByteTRACK** or **BoT-SORT** (`model.track(source, persist=True)`). This will tie detections to persistent unique IDs, neutralizing individual frame-level count spikes.
+
+### 5. Sample JSON Event Stream Output
+Below is an architectural snapshot of the semi-structured JSON payload structured by the pipeline per active frame:
+
+```json
+[
+  {
+    "timestamp": "2026-06-25 10:34:17",
+    "metrics": {
+      "total_humans": 1,
+      "total_vehicles": 0,
+      "total_surround_gadgets": 0
+    },
+    "detections": [
+      {
+        "object_class": "person",
+        "confidence": 0.89,
+        "bounding_box": [120.4, 45.1, 340.8, 620.0],
+        "demographic_context": "Male (25-30)"
+      }
+    ]
+  }
+]
+```
